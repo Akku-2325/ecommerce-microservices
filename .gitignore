@@ -1,0 +1,42 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of coverage tool
+*.out
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+
+# Go workspace files (если вы их не хотите хранить в репозитории)
+# go.work
+# go.work.sum
+
+# Environment variables file
+.env*
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Compiled binaries in service directories (если вы их там собираете)
+api-gateway/api-gateway
+inventory-service/inventory-service
+order-service/order-service
+# Добавьте другие, если имена бинарников отличаются
+
+# Папка зависимостей (если используете vendor)
+vendor/
+
+# Сгенерированные Protobuf файлы (рекомендуется генерировать при сборке, а не хранить)
+# Если вы хотите их хранить, закомментируйте следующие строки
+# **/*.pb.go
+# **/*_grpc.pb.go
