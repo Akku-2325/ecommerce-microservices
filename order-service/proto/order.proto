@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package order;
+
+option go_package = "ecommerce-microservices/order-service/internal/pb;orderpb";
+
+import "google/protobuf/timestamp.proto";
+
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  PENDING = 1;
+  COMPLETED = 2;
+  CANCELLED = 3;
+  FAILED = 4;
+}
+
+message OrderItem {
+  string product_id = 1;
+  int32 quantity = 2;
+  double price_at_order = 3;
+}
+
+message Order {
+  string id = 1;
+  string user_id = 2;
+  repeated OrderItem items = 3;
+  double total_amount = 4;
+  OrderStatus status = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+message CreateOrderItemInput {
+  string product_id = 1;
+  int32 quantity = 2;
+}
+
+message CreateOrderRequest {
+  string user_id = 1;
+  repeated CreateOrderItemInput items = 2;
+}
+
+message GetOrderRequest {
+  string id = 1;
+}
+
+message UpdateOrderStatusRequest {
+  string id = 1;
+  OrderStatus status = 2;
+}
+
+message ListOrdersRequest {
+  string user_id = 1;
+  int32 page_size = 2;
+  int32 page_number = 3;
+}
+
+message OrderResponse {
+  Order order = 1;
+}
+
+message ListOrdersResponse {
+  repeated Order orders = 1;
+  int64 total_count = 2;
+}
+
+service OrderService {
+  rpc CreateOrder(CreateOrderRequest) returns (OrderResponse);
+  rpc GetOrderByID(GetOrderRequest) returns (OrderResponse);
+  rpc UpdateOrderStatus(UpdateOrderStatusRequest) returns (OrderResponse);
+  rpc ListUserOrders(ListOrdersRequest) returns (ListOrdersResponse);
+}

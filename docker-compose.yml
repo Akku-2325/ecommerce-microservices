@@ -5,55 +5,68 @@ services:
     image: mongo:5.0
     container_name: mongo_inventory_db
     ports:
-      - "27017:27017"
+      - "27017:27017" # Мапим стандартный порт Mongo на хост 27017
     volumes:
       - mongo_inventory_data:/data/db
     restart: unless-stopped
+    networks: # Добавляем сеть
+      - ecommerce_network
 
   mongo_order: # База для заказов
     image: mongo:5.0
     container_name: mongo_order_db
     ports:
-      - "27018:27017"
+      - "27018:27017" # Мапим стандартный порт Mongo на хост 27018
     volumes:
       - mongo_order_data:/data/db
     restart: unless-stopped
+    networks: # Добавляем сеть
+      - ecommerce_network
 
   inventory-service:
     build:
-      context: . # Корень проекта как контекст
-      dockerfile: ./inventory-service/Dockerfile # Путь к Dockerfile
+      context: .
+      dockerfile: ./inventory-service/Dockerfile
     container_name: inventory_service_app
     ports:
-      - "8081:8081"
+      - "50051:50051" # Мапим gRPC порт контейнера (50051) на хост 50051
     environment:
-      SERVER_PORT: 8081
-      MONGO_HOST: mongo_inventory
-      MONGO_PORT: 27017
+      # --- ИСПРАВЛЕНО ---
+      GRPC_PORT: 50051 # Указываем порт, который слушает gRPC сервер
+      MONGO_HOST: mongo_inventory # Имя сервиса Mongo в Docker Compose
+      MONGO_PORT: 27017         # Внутренний порт Mongo
       MONGO_DBNAME: inventory_db
-      GIN_MODE: debug
+      GIN_MODE: debug # GIN_MODE здесь не используется, но оставим для консистентности
+      # --- КОНЕЦ ИСПРАВЛЕНО ---
     depends_on:
       - mongo_inventory
     restart: on-failure
+    networks: # Добавляем сеть
+      - ecommerce_network
 
   order-service:
     build:
-      context: . # Корень проекта как контекст
-      dockerfile: ./order-service/Dockerfile # Путь к Dockerfile
+      context: .
+      dockerfile: ./order-service/Dockerfile
     container_name: order_service_app
     ports:
-      - "8082:8082"
+      - "50052:50052" # Мапим gRPC порт контейнера (50052) на хост 50052
     environment:
-      SERVER_PORT: 8082
-      MONGO_HOST: mongo_order
-      MONGO_PORT: 27017
+      # --- ИСПРАВЛЕНО ---
+      GRPC_PORT: 50052 # Указываем порт, который слушает gRPC сервер
+      MONGO_HOST: mongo_order # Имя сервиса Mongo
+      MONGO_PORT: 27017       # Внутренний порт Mongo
       MONGO_DBNAME: order_db
-      INVENTORY_SERVICE_URL: http://inventory-service:8081
-      GIN_MODE: debug
+      # Правильное имя переменной и адрес gRPC инвентаря:
+      INVENTORY_SERVICE_ADDR: inventory-service:50051 # Имя_сервиса:gRPC_порт_сервиса
+      GIN_MODE: debug # GIN_MODE здесь не используется
+      # --- КОНЕЦ ИСПРАВЛЕНО ---
     depends_on:
       - mongo_order
       - inventory-service
     restart: on-failure
+    networks: # Добавляем сеть
+      - ecommerce_network
 
   api-gateway:
     build:
@@ -61,17 +74,26 @@ services:
       dockerfile: ./api-gateway/Dockerfile
     container_name: api_gateway_app
     ports:
-      - "8080:8080"
+      - "8080:8080" # Мапим HTTP порт Gin на хост 8080
     environment:
-      GATEWAY_PORT: 8080
-      INVENTORY_SERVICE_URL: http://inventory-service:8081
-      ORDER_SERVICE_URL: http://order-service:8082
+      # --- ИСПРАВЛЕНО ---
+      GATEWAY_PORT: 8080 # Порт, который слушает Gin
+      # Правильные имена переменных и адреса gRPC сервисов:
+      INVENTORY_SERVICE_ADDR: inventory-service:50051 # Имя_сервиса:gRPC_порт_сервиса
+      ORDER_SERVICE_ADDR: order-service:50052         # Имя_сервиса:gRPC_порт_сервиса
       GIN_MODE: debug
+      # --- КОНЕЦ ИСПРАВЛЕНО ---
     depends_on:
       - inventory-service
       - order-service
     restart: on-failure
+    networks: # Добавляем сеть
+      - ecommerce_network
 
 volumes:
   mongo_inventory_data:
   mongo_order_data:
+
+networks: # Определяем сеть
+  ecommerce_network:
+    driver: bridge

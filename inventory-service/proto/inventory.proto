@@ -1,1 +1,115 @@
-package proto
+syntax = "proto3";
+
+package inventory;
+
+option go_package = "ecommerce-microservices/inventory-service/internal/pb;inventorypb";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// Сообщения для Продуктов 
+message Product {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  double price = 4;
+  int32 stock = 5;
+  string category_id = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+message CreateProductRequest {
+  string name = 1;
+  string description = 2;
+  double price = 3;
+  int32 stock = 4;
+  string category_id = 5;
+}
+
+message GetProductRequest {
+  string id = 1;
+}
+
+message UpdateProductRequest {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  double price = 4;
+  int32 stock = 5;
+  string category_id = 6;
+}
+
+message DeleteProductRequest {
+  string id = 1;
+}
+
+message ListProductsRequest {
+  string category_id_filter = 1;
+  int32 page_size = 2;
+  int32 page_number = 3;
+}
+
+message ProductResponse {
+  Product product = 1;
+}
+
+message ListProductsResponse {
+  repeated Product products = 1;
+  int64 total_count = 2;
+}
+
+
+// --- Сообщения для Категорий ---
+message Category {
+  string id = 1;
+  string name = 2;
+  google.protobuf.Timestamp created_at = 3;
+  google.protobuf.Timestamp updated_at = 4;
+}
+
+message CreateCategoryRequest {
+  string name = 1;
+}
+
+message GetCategoryRequest {
+  string id = 1;
+}
+
+message UpdateCategoryRequest {
+  string id = 1;
+  string name = 2;
+}
+
+message DeleteCategoryRequest {
+  string id = 1;
+}
+
+message ListCategoriesRequest {
+  // Можно добавить пагинацию
+}
+
+message CategoryResponse {
+  Category category = 1;
+}
+
+message ListCategoriesResponse {
+  repeated Category categories = 1;
+}
+
+// Сообщения для Уменьшения Стока
+service InventoryService {
+  // Продукты
+  rpc CreateProduct(CreateProductRequest) returns (ProductResponse);
+  rpc GetProductByID(GetProductRequest) returns (ProductResponse);
+  rpc UpdateProduct(UpdateProductRequest) returns (ProductResponse);
+  rpc DeleteProduct(DeleteProductRequest) returns (google.protobuf.Empty);
+  rpc ListProducts(ListProductsRequest) returns (ListProductsResponse);
+
+  // Категории
+  rpc CreateCategory(CreateCategoryRequest) returns (CategoryResponse);
+  rpc GetCategoryByID(GetCategoryRequest) returns (CategoryResponse);
+  rpc UpdateCategory(UpdateCategoryRequest) returns (CategoryResponse);
+  rpc DeleteCategory(DeleteCategoryRequest) returns (google.protobuf.Empty);
+  rpc ListCategories(ListCategoriesRequest) returns (ListCategoriesResponse);
+}

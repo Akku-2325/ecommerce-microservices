@@ -2,19 +2,23 @@ package main
 
 import (
 	"context"
-	"ecommerce-microservices/order-service/client"
-	"ecommerce-microservices/order-service/handlers"
-	"ecommerce-microservices/order-service/store"
+	"ecommerce-microservices/order-service/pb"
+	"errors"
+	"fmt"
 	"log"
-	"net/http"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	invClient "ecommerce-microservices/order-service/internal/client"
+	grpcServer "ecommerce-microservices/order-service/internal/delivery/grpc"
+	repo "ecommerce-microservices/order-service/internal/repository"
+
 	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
 
 func getEnv(key, fallback string) string {
@@ -26,11 +30,13 @@ func getEnv(key, fallback string) string {
 }
 
 var (
-	mongoClient *mongo.Client
+	mongoClient            *mongo.Client
+	inventoryServiceClient invClient.InventoryClient
+	inventoryServiceConn   *grpc.ClientConn
 )
 
 func main() {
-	mongoCfg := store.MongoConfig{
+	mongoCfg := repo.MongoConfig{
 		Host:     getEnv("MONGO_HOST", "localhost"),
 		Port:     getEnv("MONGO_PORT", "27017"),
 		User:     getEnv("MONGO_USER", ""),
@@ -38,11 +44,12 @@ func main() {
 		DBName:   getEnv("MONGO_DBNAME", "order_db"),
 		Timeout:  15 * time.Second,
 	}
-	serverPort := getEnv("SERVER_PORT", "8082")
-	inventoryServiceURL := getEnv("INVENTORY_SERVICE_URL", "http://localhost:8081")
+	grpcPort := getEnv("GRPC_PORT", "50052")
+	inventoryServiceAddr := getEnv("INVENTORY_SERVICE_ADDR", "localhost:50051")
 
 	var err error
-	mongoClient, err = store.NewMongoConnection(mongoCfg)
+
+	mongoClient, err = repo.NewMongoConnection(mongoCfg)
 	if err != nil {
 		log.Fatalf("Failed to connect to MongoDB: %v", err)
 	}
@@ -54,69 +61,63 @@ func main() {
 			log.Printf("Error disconnecting MongoDB client: %v", err)
 		}
 	}()
+	mongoDB := repo.GetMongoDatabase(mongoClient, mongoCfg.DBName)
 
-	mongoDB := store.GetMongoDatabase(mongoClient, mongoCfg.DBName)
+	connCtx, connCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	inventoryServiceClient, inventoryServiceConn, err = invClient.NewInventoryGRPCClient(connCtx, inventoryServiceAddr)
+	connCancel()
+	if err != nil {
+		log.Fatalf("Failed to connect to Inventory Service at %s: %v", inventoryServiceAddr, err)
+	}
+	defer func() {
+		log.Println("Closing connection to Inventory Service...")
+		if inventoryServiceConn != nil {
+			inventoryServiceConn.Close()
+		}
+	}()
 
-	orderStore := store.NewMongoOrderStore(mongoDB)
+	orderStore := repo.NewMongoOrderStore(mongoDB)
+	orderServer := grpcServer.NewOrderServer(orderStore, inventoryServiceClient)
 
-	inventoryClient := client.NewInventoryClient(inventoryServiceURL)
-
-	orderHandler := handlers.NewOrderHandler(orderStore, inventoryClient)
-
-	router := gin.Default()
-
-	router.GET("/health", healthCheckHandler)
-
-	orderRoutes := router.Group("/orders")
-	{
-		orderRoutes.POST("", orderHandler.CreateOrder)
-		orderRoutes.GET("/:id", orderHandler.GetOrderByID)
-		orderRoutes.PATCH("/:id", orderHandler.UpdateOrderStatus)
-		orderRoutes.GET("", orderHandler.ListOrders)
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", grpcPort))
+	if err != nil {
+		log.Fatalf("Failed to listen on port %s: %v", grpcPort, err)
 	}
 
-	serverAddr := ":" + serverPort
-	srv := &http.Server{
-		Addr:         serverAddr,
-		Handler:      router,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
-	}
+	srv := grpc.NewServer()
+	pb.RegisterOrderServiceServer(srv, orderServer)
+	reflection.Register(srv)
 
 	go func() {
-		log.Printf("Starting Order Service (MongoDB) on %s", serverAddr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen: %s\n", err)
+		log.Printf("Starting Order gRPC Service on port %s", grpcPort)
+		if err := srv.Serve(lis); err != nil {
+			if !errors.Is(err, grpc.ErrServerStopped) {
+				log.Fatalf("Failed to serve gRPC: %v", err)
+			}
 		}
+		log.Println("gRPC server stopped serving")
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	log.Println("Shutting down server...")
+	sig := <-quit
+	log.Printf("Received signal %v, shutting down gRPC server...", sig)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatal("Server forced to shutdown:", err)
+	stopped := make(chan struct{})
+	go func() {
+		srv.GracefulStop()
+		close(stopped)
+	}()
+
+	t := time.NewTimer(10 * time.Second)
+	select {
+	case <-t.C:
+		log.Println("Graceful shutdown timed out, forcing stop.")
+		srv.Stop()
+	case <-stopped:
+		t.Stop()
+		log.Println("gRPC server stopped gracefully.")
 	}
 
-	log.Println("Server exiting")
-}
-
-func healthCheckHandler(c *gin.Context) {
-	if mongoClient == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "DOWN", "error": "Mongo client not initialized"})
-		return
-	}
-	pingCtx, pingCancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer pingCancel()
-	err := mongoClient.Ping(pingCtx, readpref.Primary())
-	if err != nil {
-		log.Printf("Health check failed: %v", err)
-		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "DOWN", "error": "MongoDB ping failed"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"status": "UP"})
+	log.Println("Order Service exiting")
 }
